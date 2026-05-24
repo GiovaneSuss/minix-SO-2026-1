@@ -322,6 +322,8 @@ static int schedule_process(struct schedproc * rmp, unsigned flags)
 
 	niced = (rmp->max_priority > USER_Q);
 
+	printf("Processo %d prioridade %d\n", rmp->endpoint, rmp->priority);
+
 	if ((err = sys_schedule(rmp->endpoint, new_prio,
 		new_quantum, new_cpu, niced)) != OK) {
 		printf("PM: An error occurred when trying to schedule %d: %d\n",
