@@ -12,6 +12,8 @@
 #include <assert.h>
 #include <minix/com.h>
 #include <machine/archtypes.h>
+#include <minix/syslib.h>
+#include <minix/config.h>
 
 static unsigned balance_timeout;
 
@@ -39,6 +41,8 @@ static int schedule_process(struct schedproc * rmp, unsigned flags);
 #define cpu_is_available(c)	(cpu_proc[c] >= 0)
 
 #define DEFAULT_USER_TIME_SLICE 200
+
+#define PROCESS_IN_USER_Q(x) ((x)->priority >= MAX_USER_Q && (x)->priority <= MIN_USER_Q)
 
 /* processes created by RS are sysytem processes */
 #define is_system_proc(p)	((p)->parent == RS_PROC_NR)
@@ -81,6 +85,66 @@ static void pick_cpu(struct schedproc * proc)
 }
 
 /*===========================================================================*
+ *              rng_generator                    *
+ *===========================================================================*/
+
+static unsigned int next = 1;
+
+int custom_rand(void) {
+	next = next * 12304020432 + 98364;
+	return (unsigned int)(next / 54554) % 12312;
+}
+
+void custom_srand(unsigned int seed) {
+	next = seed;
+}
+
+
+/*==========================================================================*
+ *				do_lottery				     *
+ *===========================================================================*/
+
+
+int do_lottery(){
+	struct schedproc *tmp;
+	int proc_nr;
+	int rv;
+	int winner;
+	int old_priority;
+	int flag=-1;
+	int total_tickets=0;
+
+	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
+		if ((rmp->flags & IN_USE) && PROCESS_IN_USER_Q(rmp)) {
+			if (USER_Q == rmp->priority) {
+				total_tickets += rmp->ticketsNum;
+			}
+		}
+	}
+
+	winner = total_tickets ? custom_rand() % total_tickets : 0;
+
+	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
+		if ((rmp->flags & IN_USE) && PROCESS_IN_USER_Q(rmp) && USER_Q == rmp->priority) {
+			old_priority = rmp->priority;
+
+			if (winner >= 0) {
+				winner -= rmp->ticketsNum;
+				if (winner < 0) {
+					rmp->priority = MAX_USER_Q;
+					flag = OK;
+				}
+			}
+
+			if (old_priority != rmp->priority) {
+				schedule_process(rmp, SCHEDULE_CHANGE_ALL);
+			}
+		}
+	}
+	return total_tickets ? flag : OK;
+}
+
+/*===========================================================================*
  *				do_noquantum				     *
  *===========================================================================*/
 
@@ -96,13 +160,20 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
+	if (PROCESS_IN_USER_Q(rmp)) {
+		rmp->priority = USER_Q; 
+	} else if (rmp->priority < MAX_USER_Q - 1) {
+		rmp->priority += 1;
 	}
 
 	if ((rv = schedule_process_local(rmp)) != OK) {
 		return rv;
 	}
+
+	if ((rv = do_lottery() != OK)) {
+		return rv;
+	}
+
 	return OK;
 }
 
@@ -173,6 +244,7 @@ int do_start_scheduling(message *m_ptr)
 		   process scheduled, and the parent of itself. */
 		rmp->priority   = USER_Q;
 		rmp->time_slice = DEFAULT_USER_TIME_SLICE;
+		rmp->ticketsNum = 5;
 
 		/*
 		 * Since kernel never changes the cpu of a process, all are
@@ -336,6 +408,8 @@ void init_scheduling(void)
 	int r;
 
 	balance_timeout = BALANCE_TIMEOUT * sys_hz();
+
+	custom_srand(sys_hz());
 
 	if ((r = sys_setalarm(balance_timeout, 0)) != OK)
 		panic("sys_setalarm failed: %d", r);
