@@ -106,17 +106,25 @@ void custom_srand(unsigned int seed) {
 
 
 int do_lottery(){
-	struct schedproc *tmp;
+	struct schedproc *rmp;
 	int proc_nr;
-	int rv;
 	int winner;
 	int old_priority;
 	int flag=-1;
 	int total_tickets=0;
 
 	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
-		if ((rmp->flags & IN_USE) && PROCESS_IN_USER_Q(rmp)) {
-			if (USER_Q == rmp->priority) {
+		if ((rmp->flags & IN_USE) && rmp->priority == USER_Q) {
+			total_tickets += rmp->ticketsNum;
+		}
+	}
+
+	/* se USER_Q está vazia (todos em cooldown), traz todos de volta */
+	if (total_tickets == 0) {
+		for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
+			if ((rmp->flags & IN_USE) && rmp->priority == MIN_USER_Q) {
+				rmp->priority = USER_Q;
+				schedule_process(rmp, SCHEDULE_CHANGE_ALL);
 				total_tickets += rmp->ticketsNum;
 			}
 		}
@@ -160,8 +168,11 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (PROCESS_IN_USER_Q(rmp)) {
-		rmp->priority = USER_Q; 
+	if (rmp->priority == MAX_USER_Q) {
+		/* vencedor da loteria esgotou quantum → cooldown na fila 18 */
+		rmp->priority = MIN_USER_Q;
+	} else if (PROCESS_IN_USER_Q(rmp)) {
+		rmp->priority = USER_Q;
 	} else if (rmp->priority < MAX_USER_Q - 1) {
 		rmp->priority += 1;
 	}
@@ -276,8 +287,9 @@ int do_start_scheduling(message *m_ptr)
 				&parent_nr_n)) != OK)
 			return rv;
 
-		rmp->priority = schedproc[parent_nr_n].priority;
+		rmp->priority   = schedproc[parent_nr_n].priority;
 		rmp->time_slice = schedproc[parent_nr_n].time_slice;
+		rmp->ticketsNum = schedproc[parent_nr_n].ticketsNum;
 		break;
 		
 	default: 
