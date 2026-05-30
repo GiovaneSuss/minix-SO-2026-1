@@ -37,3 +37,6 @@ EXTERN struct schedproc {
 
 /* Flag values */
 #define IN_USE		0x00001	/* set when 'schedproc' slot in use */
+
+unsigned int arrival_time;
+extern unsigned int fcfs_counter;
